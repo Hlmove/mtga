@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{
     AppHandle, Emitter, Listener, Manager, RunEvent, Url, WindowEvent, ipc::Channel,
     webview::PageLoadEvent,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
 
 fn resolve_python_home() -> Option<PathBuf> {
@@ -544,6 +546,45 @@ pub fn run() {
                         );
                     });
                 }
+                
+                let show_i = MenuItem::with_id(app, "show", "显示面板", true, None::<&str>)?;
+                let quit_i = MenuItem::with_id(app, "quit", "退出 MTGA", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+                let builder = TrayIconBuilder::new().menu(&menu);
+                let builder = if let Some(icon) = app.default_window_icon() {
+                    builder.icon(icon.clone())
+                } else {
+                    builder
+                };
+
+                let _tray = builder
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {}
+                    })
+                    .on_tray_icon_event(|tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            ..
+                        } = event
+                        {
+                            if let Some(window) = tray.app_handle().get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                    })
+                    .build(app)?;
+
                 Ok(())
             }
         })
@@ -554,12 +595,16 @@ pub fn run() {
                     if window.label() == "splash" && MAIN_WINDOW_SHOWN.load(Ordering::SeqCst) {
                         return;
                     }
-                    if shutdown_started.swap(true, Ordering::SeqCst) {
-                        return;
-                    }
                     api.prevent_close();
-                    let app_handle = window.app_handle().clone();
-                    spawn_shutdown(app_handle);
+                    if window.label() == "main" {
+                        let _ = window.hide();
+                    } else {
+                        if shutdown_started.swap(true, Ordering::SeqCst) {
+                            return;
+                        }
+                        let app_handle = window.app_handle().clone();
+                        spawn_shutdown(app_handle);
+                    }
                 }
             }
         })
